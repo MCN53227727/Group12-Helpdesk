@@ -24,7 +24,7 @@ export default function AuthScreen() {
     if (result.error) {
       setError(result.error.message);
     } else if (mode === "sign_up") {
-      setNote("Account created. Check your email to confirm, then sign in.");
+      setNote("Account created. Please check your email to confirm, then sign in.");
       setMode("sign_in");
     }
   };
