@@ -1,18 +1,13 @@
--- ============================================================================
+
 -- NWU Helpdesk Ticketing System
 -- Supabase / PostgreSQL Database Schema
--- ============================================================================
 
--- ============================================================================
 -- 1. EXTENSIONS
--- ============================================================================
+
 
 create extension if not exists "pgcrypto";
 
-
--- ============================================================================
 -- 2. ENUM TYPES
--- ============================================================================
 
 create type public.app_role as enum (
   'customer',
@@ -36,10 +31,7 @@ create type public.ticket_priority as enum (
   'urgent'
 );
 
-
--- ============================================================================
 -- 3. PROFILES
--- ============================================================================
 
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -80,10 +72,7 @@ create trigger on_auth_user_created
   for each row
   execute procedure public.handle_new_user();
 
-
--- ============================================================================
 -- 4. TICKET CATEGORIES
--- ============================================================================
 
 create table public.categories (
   id uuid primary key default gen_random_uuid(),
@@ -92,17 +81,11 @@ create table public.categories (
   created_at timestamptz not null default now()
 );
 
-
--- ============================================================================
 -- 5. TICKET NUMBER SEQUENCE
--- ============================================================================
 
 create sequence public.ticket_number_seq;
 
-
--- ============================================================================
 -- 6. TICKETS
--- ============================================================================
 
 create table public.tickets (
   id uuid primary key default gen_random_uuid(),
@@ -140,9 +123,7 @@ create table public.tickets (
 );
 
 
--- ============================================================================
 -- 7. TICKET COMMENTS
--- ============================================================================
 
 create table public.ticket_comments (
   id uuid primary key default gen_random_uuid(),
@@ -163,9 +144,7 @@ create table public.ticket_comments (
 );
 
 
--- ============================================================================
 -- 8. AUDIT LOG
--- ============================================================================
 
 create table public.audit_logs (
   id uuid primary key default gen_random_uuid(),
@@ -186,10 +165,7 @@ create table public.audit_logs (
   created_at timestamptz not null default now()
 );
 
-
--- ============================================================================
 -- 9. INDEXES
--- ============================================================================
 
 create index tickets_customer_id_idx
   on public.tickets(customer_id);
@@ -215,10 +191,7 @@ create index audit_logs_ticket_id_idx
 create index audit_logs_actor_id_idx
   on public.audit_logs(actor_id);
 
-
--- ============================================================================
 -- 10. UPDATED_AT FUNCTION
--- ============================================================================
 
 create or replace function public.touch_updated_at()
 returns trigger
@@ -236,10 +209,7 @@ create trigger tickets_touch_updated_at
   for each row
   execute procedure public.touch_updated_at();
 
-
--- ============================================================================
 -- 11. HELPER FUNCTIONS FOR RLS
--- ============================================================================
 
 create or replace function public.current_role()
 returns public.app_role
@@ -281,10 +251,7 @@ as $$
   );
 $$;
 
-
--- ============================================================================
 -- 12. ENABLE ROW LEVEL SECURITY
--- ============================================================================
 
 alter table public.profiles enable row level security;
 alter table public.categories enable row level security;
@@ -292,10 +259,7 @@ alter table public.tickets enable row level security;
 alter table public.ticket_comments enable row level security;
 alter table public.audit_logs enable row level security;
 
-
--- ============================================================================
 -- 13. PROFILE POLICIES
--- ============================================================================
 
 create policy "profiles: users read own"
   on public.profiles
@@ -327,10 +291,7 @@ create policy "profiles: admins manage users"
   using (public.is_admin())
   with check (public.is_admin());
 
-
--- ============================================================================
 -- 14. CATEGORY POLICIES
--- ============================================================================
 
 create policy "categories: authenticated users read"
   on public.categories
@@ -357,10 +318,7 @@ create policy "categories: admins delete"
   for delete
   using (public.is_admin());
 
-
--- ============================================================================
 -- 15. TICKET POLICIES
--- ============================================================================
 
 -- Customers can view their own tickets.
 create policy "tickets: customers read own"
@@ -422,10 +380,7 @@ create policy "tickets: admins delete"
   for delete
   using (public.is_admin());
 
-
--- ============================================================================
 -- 16. COMMENT POLICIES
--- ============================================================================
 
 -- Customers can see non-internal comments on their own tickets.
 create policy "comments: customers read own non-internal"
@@ -483,10 +438,7 @@ create policy "comments: admins delete"
   for delete
   using (public.is_admin());
 
-
--- ============================================================================
 -- 17. AUDIT LOGGING FUNCTION
--- ============================================================================
 
 create or replace function public.log_ticket_activity()
 returns trigger
@@ -562,10 +514,7 @@ create trigger tickets_audit_trigger
   for each row
   execute procedure public.log_ticket_activity();
 
-
--- ============================================================================
 -- 18. AUDIT LOG POLICIES
--- ============================================================================
 
 create policy "audit logs: admins read all"
   on public.audit_logs
@@ -580,10 +529,7 @@ create policy "audit logs: agents read"
     public.current_role() = 'agent'
   );
 
-
--- ============================================================================
 -- 19. REALTIME
--- ============================================================================
 
 alter publication supabase_realtime
   add table public.tickets;
@@ -591,7 +537,4 @@ alter publication supabase_realtime
 alter publication supabase_realtime
   add table public.ticket_comments;
 
-
--- ============================================================================
 -- END OF NWU HELPDESK DATABASE SCHEMA
--- ============================================================================
