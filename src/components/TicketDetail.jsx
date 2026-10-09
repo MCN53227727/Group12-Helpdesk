@@ -1,100 +1,214 @@
+import { useEffect, useState, useCallback } from "react";
+import { supabase } from "../lib/supabaseClient";
+import { useAuth } from "../lib/AuthContext";
 
-public class TicketDetail {
+const STATUS_OPTIONS = ["open", "in_progress", "waiting_on_customer", "resolved", "closed"];
+const PRIORITY_OPTIONS = ["low", "medium", "high", "urgent"];
 
-    private int ticketID;
-    private String title;
-    private String description;
-    private String dateCreated;
-    private String status;
-    private String priority;
-    private String category;
-    private String requester;
-    private String assignedTechnician;
-    private String resolution;
+export default function TicketDetail({ ticketId, onBack }) {
+  const { role, profile } = useAuth();
+  const isStaff = role === "agent" || role === "admin";
 
-    public TicketDetail(int ticketID, String title, String description,
-                        String dateCreated, String status, String priority,
-                        String category, String requester,
-                        String assignedTechnician, String resolution) {
+  const [ticket, setTicket] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [commentBody, setCommentBody] = useState("");
+  const [isInternal, setIsInternal] = useState(false);
+  const [error, setError] = useState(null);
 
-        this.ticketID = ticketID;
-        this.title = title;
-        this.description = description;
-        this.dateCreated = dateCreated;
-        this.status = status;
-        this.priority = priority;
-        this.category = category;
-        this.requester = requester;
-        this.assignedTechnician = assignedTechnician;
-        this.resolution = resolution;
+  const loadTicket = useCallback(async () => {
+    setLoading(true);
+    const { data: ticketData, error: ticketErr } = await supabase
+      .from("tickets")
+      .select(
+        "*, customer:customer_id(id, full_name, email), assigned_agent:assigned_agent_id(id, full_name, email)"
+      )
+      .eq("id", ticketId)
+      .single();
+
+    const { data: commentData, error: commentErr } = await supabase
+      .from("ticket_comments")
+      .select("*, author:author_id(id, full_name, email)")
+      .eq("ticket_id", ticketId)
+      .order("created_at", { ascending: true });
+
+    if (ticketErr) setError(ticketErr.message);
+    else setTicket(ticketData);
+
+    if (commentErr) setError((prev) => prev ?? commentErr.message);
+    else setComments(commentData ?? []);
+
+    setLoading(false);
+  }, [ticketId]);
+
+  useEffect(() => {
+    loadTicket();
+
+    if (isStaff) {
+      supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("role", ["agent", "admin"])
+        .then(({ data }) => setAgents(data ?? []));
     }
 
-    public int getTicketID() {
-        return ticketID;
-    }
+    // Live updates: new comments or status changes from the other party
+    // show up without a manual refresh.
+    const channel = supabase
+      .channel(`ticket-${ticketId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ticket_comments", filter: `ticket_id=eq.${ticketId}` },
+        () => loadTicket()
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "tickets", filter: `id=eq.${ticketId}` },
+        () => loadTicket()
+      )
+      .subscribe();
 
-    public String getTitle() {
-        return title;
-    }
+    return () => supabase.removeChannel(channel);
+  }, [ticketId, isStaff, loadTicket]);
 
-    public String getDescription() {
-        return description;
-    }
+  const updateTicket = async (patch) => {
+    const { error } = await supabase.from("tickets").update(patch).eq("id", ticketId);
+    if (error) setError(error.message);
+    else loadTicket();
+  };
 
-    public String getDateCreated() {
-        return dateCreated;
+  const submitComment = async (e) => {
+    e.preventDefault();
+    if (!commentBody.trim()) return;
+    const { error } = await supabase.from("ticket_comments").insert({
+      ticket_id: ticketId,
+      author_id: profile.id,
+      body: commentBody,
+      is_internal: isStaff ? isInternal : false,
+    });
+    if (error) {
+      setError(error.message);
+      return;
     }
+    setCommentBody("");
+    setIsInternal(false);
+    loadTicket();
+  };
 
-    public String getStatus() {
-        return status;
-    }
+  if (loading) return <div className="empty-state">Loading case file…</div>;
+  if (!ticket) return <div className="empty-state">Ticket not found, or you don't have access to it.</div>;
 
-    public String getPriority() {
-        return priority;
-    }
+  return (
+    <div>
+      <button className="btn btn--ghost" onClick={onBack} style={{ marginBottom: 20 }}>
+        ← Back to queue
+      </button>
 
-    public String getCategory() {
-        return category;
-    }
+      <h2 style={{ fontFamily: "var(--serif)", fontWeight: 500, fontSize: 24, margin: "0 0 6px" }}>
+        {ticket.subject}
+      </h2>
 
-    public String getRequester() {
-        return requester;
-    }
+      <div className="case-file__meta">
+        <span>#{ticket.id.slice(0, 8)}</span>
+        <span>opened by {ticket.customer?.full_name || ticket.customer?.email}</span>
+        <span>{new Date(ticket.created_at).toLocaleString()}</span>
+      </div>
 
-    public String getAssignedTechnician() {
-        return assignedTechnician;
-    }
+      <div className="case-file__description">{ticket.description}</div>
 
-    public String getResolution() {
-        return resolution;
-    }
+      {error && <div className="form-error">{error}</div>}
 
-    public void setStatus(String status) {
-        this.status = status;
-    }
+      <div className="controls-row">
+        <div className="field-inline">
+          <label>Status</label>
+          {isStaff ? (
+            <select value={ticket.status} onChange={(e) => updateTicket({ status: e.target.value })}>
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s.replaceAll("_", " ")}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="status-tag" data-status={ticket.status}>
+              {ticket.status.replaceAll("_", " ")}
+            </span>
+          )}
+        </div>
 
-    public void setPriority(String priority) {
-        this.priority = priority;
-    }
+        <div className="field-inline">
+          <label>Priority</label>
+          {isStaff ? (
+            <select value={ticket.priority} onChange={(e) => updateTicket({ priority: e.target.value })}>
+              {PRIORITY_OPTIONS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span>{ticket.priority}</span>
+          )}
+        </div>
 
-    public void setAssignedTechnician(String assignedTechnician) {
-        this.assignedTechnician = assignedTechnician;
-    }
+        {isStaff && (
+          <div className="field-inline">
+            <label>Assigned to</label>
+            <select
+              value={ticket.assigned_agent_id ?? ""}
+              onChange={(e) => updateTicket({ assigned_agent_id: e.target.value || null })}
+            >
+              <option value="">— unassigned —</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.full_name || a.email}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
 
-    public void setResolution(String resolution) {
-        this.resolution = resolution;
-    }
+      <div className="thread">
+        {comments.map((c) => (
+          <div key={c.id} className="thread__item" data-internal={c.is_internal}>
+            <div className="thread__head">
+              <span>
+                {c.author?.full_name || c.author?.email}
+                {c.is_internal && <span className="thread__internal-flag"> · internal note</span>}
+              </span>
+              <span>{new Date(c.created_at).toLocaleString()}</span>
+            </div>
+            <div>{c.body}</div>
+          </div>
+        ))}
+      </div>
 
-    public void displayTicket() {
-        System.out.println("Ticket ID: " + ticketID);
-        System.out.println("Title: " + title);
-        System.out.println("Description: " + description);
-        System.out.println("Date Created: " + dateCreated);
-        System.out.println("Status: " + status);
-        System.out.println("Priority: " + priority);
-        System.out.println("Category: " + category);
-        System.out.println("Requester: " + requester);
-        System.out.println("Assigned Technician: " + assignedTechnician);
-        System.out.println("Resolution: " + resolution);
-    }
+      <form className="comment-form" onSubmit={submitComment}>
+        <textarea
+          placeholder={isStaff ? "Reply to the customer, or add an internal note…" : "Add a reply…"}
+          value={commentBody}
+          onChange={(e) => setCommentBody(e.target.value)}
+        />
+        <div className="comment-form__actions">
+          {isStaff ? (
+            <label className="checkbox-line">
+              <input
+                type="checkbox"
+                checked={isInternal}
+                onChange={(e) => setIsInternal(e.target.checked)}
+              />
+              Internal note (hidden from customer)
+            </label>
+          ) : (
+            <span />
+          )}
+          <button className="btn" type="submit">
+            Post
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 }
